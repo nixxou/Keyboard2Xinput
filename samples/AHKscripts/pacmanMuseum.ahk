@@ -1,3 +1,4 @@
+#Persistent
 #NoEnv  ; Recommended for performance and compatibility with future AutoHotkey releases.
 ; #Warn  ; Enable warnings to assist with detecting common errors.
 SendMode Input  ; Recommended for new scripts due to its superior speed and reliability.
@@ -25,5 +26,6 @@ If (!pid1)
 
    #second method: stop keyboard2Xinput by sending numpad multiply key (see k2x mapping.ini)
    SendInput {NumpadMult}
+   ExitApp
 }
 Return
