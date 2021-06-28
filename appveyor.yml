@@ -1,5 +1,5 @@
 version: 1.2.2.{build}
-image: Visual Studio 2017
+image: Visual Studio 2019
 environment:
   PYTHON: "C:\\Python38"
 assembly_info:
