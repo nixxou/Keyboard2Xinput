@@ -16,6 +16,18 @@ namespace Keyboard2XinputGui
     {
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
         private static Keyboard2XinputGui gui;
+
+        [Flags]
+        enum EXECUTION_STATE : uint
+        {
+            ES_CONTINUOUS = 0x80000000,
+            ES_DISPLAY_REQUIRED = 0x00000002,
+            ES_SYSTEM_REQUIRED = 0x00000001
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        static extern EXECUTION_STATE SetThreadExecutionState(EXECUTION_STATE esFlags);
+
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
@@ -94,6 +106,8 @@ namespace Keyboard2XinputGui
                         currentDomain.UnhandledException += new UnhandledExceptionEventHandler(MyHandler);
                         Application.ApplicationExit += new EventHandler(OnApplicationExit);
                         gui = new Keyboard2XinputGui(mappingFile);
+                        // prevent display sleep
+                        SetThreadExecutionState(EXECUTION_STATE.ES_CONTINUOUS | EXECUTION_STATE.ES_SYSTEM_REQUIRED | EXECUTION_STATE.ES_DISPLAY_REQUIRED);
                         // Run() without parameter to not show the form at launch
                         Application.Run();
                         //Application.Run(gui);
@@ -105,6 +119,8 @@ namespace Keyboard2XinputGui
                     // edited by acidzombie24, added if statement
                     if (hasHandle)
                         mutex.ReleaseMutex();
+                    // enable display sleep
+                    SetThreadExecutionState(EXECUTION_STATE.ES_CONTINUOUS);
                 }
             }
         }
