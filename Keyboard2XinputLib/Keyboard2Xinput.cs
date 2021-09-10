@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 
 using System.Windows.Forms;
@@ -16,24 +17,55 @@ namespace Keyboard2XinputLib
     public class Keyboard2Xinput
     {
         private static readonly log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+        private const short AXIS_POS_VALUE = 0x7530;
+        private const short AXIS_NEG_VALUE = -0x7530;
+        private const byte TRIGGER_VALUE = 0xFF;
+        private static System.Threading.Timer timer;
         public const int WM_KEYDOWN = 0x0100;
         public const int WM_KEYUP = 0x0101;
         public const int WM_SYSKEYDOWN = 0x0104;
         private Dictionary<string, Xbox360Button> buttonsDict = new Dictionary<string, Xbox360Button>();
         private Dictionary<string, KeyValuePair<Xbox360Axis, short>> axesDict = new Dictionary<string, KeyValuePair<Xbox360Axis, short>>();
         private Dictionary<string, KeyValuePair<Xbox360Slider, byte>> slidersDict = new Dictionary<string, KeyValuePair<Xbox360Slider, byte>>();
+        // Windows introduces a delay when notifying us of each key press (usually 7-15ms between each key), which causes problems with games
+        // like Mortal Kombat XI and Injustice 2 (at least)
+        // To work around this, a "poll interval" is used: when >0, inputs are buffered and sent each pollInterval millisecond
+        private int pollInterval = 0;
+        // the object that stores the pad states when they are buffered
+        private PadsStates padsStates;
+        // The mutex used when buffering inputs so that the PadsStates List is not modified concurrently by the thread listening to inputs and the one that regularly updates the virtual pads
+        private static readonly Mutex Mutex = new Mutex();
 
 
         private ViGEmClient client;
         private List<IXbox360Controller> controllers;
         private List<ISet<Xbox360Button>> pressedButtons;
+
         private Config config;
-        private Boolean enabled = true;
+        private bool enabled = true;
         private List<StateListener> listeners;
 
         public Keyboard2Xinput(String mappingFile)
         {
             config = new Config(mappingFile);
+
+            string pollIntervalStr  = config.getCurrentMapping()["config"]["pollInterval"];
+            if (pollIntervalStr != null)
+            {
+                try
+                {
+
+                    pollInterval = Int16.Parse(pollIntervalStr);
+                    log.Info($"Using a poll interval of {pollInterval}");
+                } catch (FormatException e)
+                {
+                    log.Error($"Error parsing poll interval: {pollIntervalStr} is not an integer", e);
+
+                }
+            }else
+            {
+                log.Info($"Poll interval is 0: inputs will not be buffered");
+            }
 
             InitializeAxesDict();
             InitializeButtonsDict();
@@ -63,11 +95,8 @@ namespace Keyboard2XinputLib
                 IXbox360Controller controller = client.CreateXbox360Controller();
                 controllers.Add(controller);
                 controller.FeedbackReceived +=
-                    (sender, eventArgs) => Console.WriteLine(
-                        $"LM: {eventArgs.LargeMotor}, " +
-                        $"SM: {eventArgs.SmallMotor}, " +
-                        $"LED: {eventArgs.LedNumber}");
-
+                    (sender, eventArgs) => log.Debug(
+                        $"LM: {eventArgs.LargeMotor}, SM: {eventArgs.SmallMotor}, LED: {eventArgs.LedNumber}");
                 controller.Connect();
                 Thread.Sleep(1000);
             }
@@ -77,7 +106,41 @@ namespace Keyboard2XinputLib
             {
                 pressedButtons.Add(new HashSet<Xbox360Button>());
             }
+            // if poll interval is > 0, start the polling thread
+            if (pollInterval > 0)
+            {
+                padsStates = new PadsStates(controllers);
+                timer = new System.Threading.Timer(
+                callback: new TimerCallback(TimerTask),
+                state: padsStates,
+                dueTime: 100,
+                period: pollInterval);
+
+            }
+
             listeners = new List<StateListener>();
+        }
+
+        private static void TimerTask(object timerState)
+        {
+            //log.Debug($"{DateTime.Now:HH:mm:ss.fff}: about to update pads states.");
+            var state = timerState as PadsStates;
+            List<PadState> padStates = state.GetAndFlushBuffer();
+            foreach (var padState in padStates)
+            {
+                if (padState.property is Xbox360Button)
+                {
+                    state.Controllers[padState.padNumber].SetButtonState((Xbox360Button)padState.property, (bool)padState.value);
+                }
+                else if (padState.property is Xbox360Axis)
+                {
+                    state.Controllers[padState.padNumber].SetAxisValue((Xbox360Axis)padState.property, (short)padState.value);
+                }
+                else if (padState.property is Xbox360Slider)
+                {
+                    state.Controllers[padState.padNumber].SetSliderValue((Xbox360Slider)padState.property, (byte)padState.value);
+                }
+            };
         }
 
         public void AddListener(StateListener listener)
@@ -128,7 +191,15 @@ namespace Keyboard2XinputLib
                                 }
                                 // store the state of the button
                                 pressedButtons[i].Add(pressedButton);
-                                controllers[i].SetButtonState(pressedButton, true);
+                                // only buffer inputs if pollInterval > 0
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetButtonState(pressedButton, true);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, pressedButton, true);
+                                }
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
@@ -137,7 +208,14 @@ namespace Keyboard2XinputLib
                             else
                             {
                                 Xbox360Button pressedButton = buttonsDict[mappedButton];
-                                controllers[i].SetButtonState(pressedButton, false);
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetButtonState(pressedButton, false);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, pressedButton, false);
+                                }
                                 // remove the button state from our own set
                                 pressedButtons[i].Remove(pressedButton);
                                 if (log.IsDebugEnabled)
@@ -153,7 +231,14 @@ namespace Keyboard2XinputLib
                             KeyValuePair<Xbox360Axis, short> axisValuePair = axesDict[mappedButton];
                             if ((eventType == WM_KEYDOWN) || (eventType == WM_SYSKEYDOWN))
                             {
-                                controllers[i].SetAxisValue(axisValuePair.Key, axisValuePair.Value);
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetAxisValue(axisValuePair.Key, axisValuePair.Value);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, axisValuePair.Key, axisValuePair.Value);
+                                }
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
@@ -161,7 +246,14 @@ namespace Keyboard2XinputLib
                             }
                             else
                             {
-                                controllers[i].SetAxisValue(axisValuePair.Key, 0x0);
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetAxisValue(axisValuePair.Key, 0x0);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, axisValuePair.Key, (short)0x0);
+                                }
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} up");
@@ -169,13 +261,20 @@ namespace Keyboard2XinputLib
                             }
                             handled = 1;
                             break;
-                        }    
+                        }
                         else if (slidersDict.ContainsKey(mappedButton))
                         {
                             KeyValuePair<Xbox360Slider, byte> sliderValuePair = slidersDict[mappedButton];
                             if ((eventType == WM_KEYDOWN) || (eventType == WM_SYSKEYDOWN))
                             {
-                                controllers[i].SetSliderValue(sliderValuePair.Key, sliderValuePair.Value);
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetSliderValue(sliderValuePair.Key, sliderValuePair.Value);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, sliderValuePair.Key, sliderValuePair.Value);
+                                }
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
@@ -183,7 +282,14 @@ namespace Keyboard2XinputLib
                             }
                             else
                             {
-                                controllers[i].SetSliderValue(sliderValuePair.Key, 0x0);
+                                if (pollInterval == 0)
+                                {
+                                    controllers[i].SetSliderValue(sliderValuePair.Key, 0x0);
+                                }
+                                else
+                                {
+                                    padsStates.PushState(i, sliderValuePair.Key, (byte)0x0);
+                                }
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} up");
@@ -266,21 +372,17 @@ namespace Keyboard2XinputLib
         }
         private void InitializeAxesDict()
         {
-            // a bit weird: left& right thumb axes max values are 0x7530 (max short value), but left & right triggers max value are 0xFF
-            byte triggerValue = 0xFF;
-            short posAxisValue = 0x7530;
-            short negAxisValue = -0x7530;
             // TODO create slider dict
-            slidersDict.Add("LT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.LeftTrigger, triggerValue));
-            slidersDict.Add("RT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.RightTrigger, triggerValue));
-            axesDict.Add("LLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, negAxisValue));
-            axesDict.Add("LRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, posAxisValue));
-            axesDict.Add("LUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, posAxisValue));
-            axesDict.Add("LDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, negAxisValue));
-            axesDict.Add("RLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, negAxisValue));
-            axesDict.Add("RRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, posAxisValue));
-            axesDict.Add("RUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, posAxisValue));
-            axesDict.Add("RDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, negAxisValue));
+            slidersDict.Add("LT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.LeftTrigger, TRIGGER_VALUE));
+            slidersDict.Add("RT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.RightTrigger, TRIGGER_VALUE));
+            axesDict.Add("LLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, AXIS_NEG_VALUE));
+            axesDict.Add("LRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, AXIS_POS_VALUE));
+            axesDict.Add("LUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, AXIS_POS_VALUE));
+            axesDict.Add("LDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, AXIS_NEG_VALUE));
+            axesDict.Add("RLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, AXIS_NEG_VALUE));
+            axesDict.Add("RRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, AXIS_POS_VALUE));
+            axesDict.Add("RUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, AXIS_POS_VALUE));
+            axesDict.Add("RDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, AXIS_NEG_VALUE));
 
         }
 
@@ -332,6 +434,50 @@ namespace Keyboard2XinputLib
         public Boolean IsEnabled()
         {
             return enabled;
+        }
+
+        /// <summary>Class <c>PadState</c> represents a XBox360 button, axis or trigger states.<br/>
+        /// It's used when the poll intervall is >0 to store the pad states that will be passed to the virtual pads during the next update.</summary>
+
+        private class PadState
+        {
+            public int padNumber;
+            public Xbox360Property property;
+            public Object value;
+            public PadState(int padNumber, Xbox360Property button, Object state)
+            {
+                this.padNumber = padNumber;
+                this.property = button;
+                this.value = state;
+            }
+        }
+
+        private class PadsStates
+        {
+            public readonly List<PadState> Buffer = new List<PadState>();
+
+            public List<IXbox360Controller> Controllers { get; }
+
+            public PadsStates(List<IXbox360Controller> controllers)
+            {
+                Controllers = controllers;
+            }
+
+            public void PushState(int padNumber, Xbox360Property button, Object state)
+            {
+                PadState padState = new PadState(padNumber, button, state);
+                Mutex.WaitOne();
+                Buffer.Add(padState);
+                Mutex.ReleaseMutex();
+            }
+            public List<PadState> GetAndFlushBuffer()
+            {
+                Mutex.WaitOne();
+                List<PadState> result = new List<PadState>(Buffer);
+                Buffer.Clear();
+                Mutex.ReleaseMutex();
+                return result;
+            }
         }
     }
 }
