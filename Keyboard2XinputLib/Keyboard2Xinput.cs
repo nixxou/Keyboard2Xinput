@@ -19,14 +19,14 @@ namespace Keyboard2XinputLib
         public const int WM_KEYDOWN = 0x0100;
         public const int WM_KEYUP = 0x0101;
         public const int WM_SYSKEYDOWN = 0x0104;
-        private Dictionary<string, Xbox360Buttons> buttonsDict = new Dictionary<string, Xbox360Buttons>();
-        private Dictionary<string, KeyValuePair<Xbox360Axes, short>> axesDict = new Dictionary<string, KeyValuePair<Xbox360Axes, short>>();
+        private Dictionary<string, Xbox360Button> buttonsDict = new Dictionary<string, Xbox360Button>();
+        private Dictionary<string, KeyValuePair<Xbox360Axis, short>> axesDict = new Dictionary<string, KeyValuePair<Xbox360Axis, short>>();
+        private Dictionary<string, KeyValuePair<Xbox360Slider, byte>> slidersDict = new Dictionary<string, KeyValuePair<Xbox360Slider, byte>>();
 
 
         private ViGEmClient client;
-        private List<Xbox360Controller> controllers;
-        private List<Xbox360Report> reports;
-        private List<ISet<Xbox360Buttons>> pressedButtons;
+        private List<IXbox360Controller> controllers;
+        private List<ISet<Xbox360Button>> pressedButtons;
         private Config config;
         private Boolean enabled = true;
         private List<StateListener> listeners;
@@ -57,11 +57,10 @@ namespace Keyboard2XinputLib
                 throw new ViGEmBusNotFoundException("ViGEm bus not found, please make sure ViGEm is correctly installed.", e);
             }
             // create pads
-            controllers = new List<Xbox360Controller>(config.PadCount);
-            reports = new List<Xbox360Report>(config.PadCount);
+            controllers = new List<IXbox360Controller>(config.PadCount);
             for (int i = 1; i <= config.PadCount; i++)
             {
-                Xbox360Controller controller = new Xbox360Controller(client);
+                IXbox360Controller controller = client.CreateXbox360Controller();
                 controllers.Add(controller);
                 controller.FeedbackReceived +=
                     (sender, eventArgs) => Console.WriteLine(
@@ -70,14 +69,13 @@ namespace Keyboard2XinputLib
                         $"LED: {eventArgs.LedNumber}");
 
                 controller.Connect();
-                reports.Add(new Xbox360Report());
                 Thread.Sleep(1000);
             }
             // the pressed buttons (to avoid sending reports if the pressed buttons haven't changed)
-            pressedButtons = new List<ISet<Xbox360Buttons>>(config.PadCount);
+            pressedButtons = new List<ISet<Xbox360Button>>(config.PadCount);
             for (int i = 0; i < config.PadCount; i++)
             {
-                pressedButtons.Add(new HashSet<Xbox360Buttons>());
+                pressedButtons.Add(new HashSet<Xbox360Button>());
             }
             listeners = new List<StateListener>();
         }
@@ -122,7 +120,7 @@ namespace Keyboard2XinputLib
                             if ((eventType == WM_KEYDOWN) || (eventType == WM_SYSKEYDOWN))
                             {
                                 // if we already notified the virtual pad, don't do it again
-                                Xbox360Buttons pressedButton = buttonsDict[mappedButton];
+                                Xbox360Button pressedButton = buttonsDict[mappedButton];
                                 if (pressedButtons[i].Contains(pressedButton))
                                 {
                                     handled = 1;
@@ -130,7 +128,7 @@ namespace Keyboard2XinputLib
                                 }
                                 // store the state of the button
                                 pressedButtons[i].Add(pressedButton);
-                                reports[i].SetButtonState(pressedButton, true);
+                                controllers[i].SetButtonState(pressedButton, true);
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
@@ -138,8 +136,8 @@ namespace Keyboard2XinputLib
                             }
                             else
                             {
-                                Xbox360Buttons pressedButton = buttonsDict[mappedButton];
-                                reports[i].SetButtonState(pressedButton, false);
+                                Xbox360Button pressedButton = buttonsDict[mappedButton];
+                                controllers[i].SetButtonState(pressedButton, false);
                                 // remove the button state from our own set
                                 pressedButtons[i].Remove(pressedButton);
                                 if (log.IsDebugEnabled)
@@ -147,16 +145,15 @@ namespace Keyboard2XinputLib
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} up");
                                 }
                             }
-                            controllers[i].SendReport(reports[i]);
                             handled = 1;
                             break;
                         }
                         else if (axesDict.ContainsKey(mappedButton))
                         {
-                            KeyValuePair<Xbox360Axes, short> axisValuePair = axesDict[mappedButton];
+                            KeyValuePair<Xbox360Axis, short> axisValuePair = axesDict[mappedButton];
                             if ((eventType == WM_KEYDOWN) || (eventType == WM_SYSKEYDOWN))
                             {
-                                reports[i].SetAxis(axisValuePair.Key, axisValuePair.Value);
+                                controllers[i].SetAxisValue(axisValuePair.Key, axisValuePair.Value);
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
@@ -164,13 +161,34 @@ namespace Keyboard2XinputLib
                             }
                             else
                             {
-                                reports[i].SetAxis(axisValuePair.Key, 0x0);
+                                controllers[i].SetAxisValue(axisValuePair.Key, 0x0);
                                 if (log.IsDebugEnabled)
                                 {
                                     log.Debug($"pad{padNumberForDisplay} {mappedButton} up");
                                 }
                             }
-                            controllers[i].SendReport(reports[i]);
+                            handled = 1;
+                            break;
+                        }    
+                        else if (slidersDict.ContainsKey(mappedButton))
+                        {
+                            KeyValuePair<Xbox360Slider, byte> sliderValuePair = slidersDict[mappedButton];
+                            if ((eventType == WM_KEYDOWN) || (eventType == WM_SYSKEYDOWN))
+                            {
+                                controllers[i].SetSliderValue(sliderValuePair.Key, sliderValuePair.Value);
+                                if (log.IsDebugEnabled)
+                                {
+                                    log.Debug($"pad{padNumberForDisplay} {mappedButton} down");
+                                }
+                            }
+                            else
+                            {
+                                controllers[i].SetSliderValue(sliderValuePair.Key, 0x0);
+                                if (log.IsDebugEnabled)
+                                {
+                                    log.Debug($"pad{padNumberForDisplay} {mappedButton} up");
+                                }
+                            }
                             handled = 1;
                             break;
                         }
@@ -249,45 +267,46 @@ namespace Keyboard2XinputLib
         private void InitializeAxesDict()
         {
             // a bit weird: left& right thumb axes max values are 0x7530 (max short value), but left & right triggers max value are 0xFF
-            short triggerValue = 0xFF;
+            byte triggerValue = 0xFF;
             short posAxisValue = 0x7530;
             short negAxisValue = -0x7530;
-            axesDict.Add("LT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.LeftTrigger, triggerValue));
-            axesDict.Add("RT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.RightTrigger, triggerValue));
-            axesDict.Add("LLEFT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.LeftThumbX, negAxisValue));
-            axesDict.Add("LRIGHT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.LeftThumbX, posAxisValue));
-            axesDict.Add("LUP", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.LeftThumbY, posAxisValue));
-            axesDict.Add("LDOWN", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.LeftThumbY, negAxisValue));
-            axesDict.Add("RLEFT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.RightThumbX, negAxisValue));
-            axesDict.Add("RRIGHT", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.RightThumbX, posAxisValue));
-            axesDict.Add("RUP", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.RightThumbY, posAxisValue));
-            axesDict.Add("RDOWN", new KeyValuePair<Xbox360Axes, short>(Xbox360Axes.RightThumbY, negAxisValue));
+            // TODO create slider dict
+            slidersDict.Add("LT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.LeftTrigger, triggerValue));
+            slidersDict.Add("RT", new KeyValuePair<Xbox360Slider, byte>(Xbox360Slider.RightTrigger, triggerValue));
+            axesDict.Add("LLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, negAxisValue));
+            axesDict.Add("LRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbX, posAxisValue));
+            axesDict.Add("LUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, posAxisValue));
+            axesDict.Add("LDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.LeftThumbY, negAxisValue));
+            axesDict.Add("RLEFT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, negAxisValue));
+            axesDict.Add("RRIGHT", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbX, posAxisValue));
+            axesDict.Add("RUP", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, posAxisValue));
+            axesDict.Add("RDOWN", new KeyValuePair<Xbox360Axis, short>(Xbox360Axis.RightThumbY, negAxisValue));
 
         }
 
         private void InitializeButtonsDict()
         {
-            buttonsDict.Add("UP", Xbox360Buttons.Up);
-            buttonsDict.Add("DOWN", Xbox360Buttons.Down);
-            buttonsDict.Add("LEFT", Xbox360Buttons.Left);
-            buttonsDict.Add("RIGHT", Xbox360Buttons.Right);
-            buttonsDict.Add("A", Xbox360Buttons.A);
-            buttonsDict.Add("B", Xbox360Buttons.B);
-            buttonsDict.Add("X", Xbox360Buttons.X);
-            buttonsDict.Add("Y", Xbox360Buttons.Y);
-            buttonsDict.Add("START", Xbox360Buttons.Start);
-            buttonsDict.Add("BACK", Xbox360Buttons.Back);
-            buttonsDict.Add("GUIDE", Xbox360Buttons.Guide);
-            buttonsDict.Add("LB", Xbox360Buttons.LeftShoulder);
-            buttonsDict.Add("LTB", Xbox360Buttons.LeftThumb);
-            buttonsDict.Add("RB", Xbox360Buttons.RightShoulder);
-            buttonsDict.Add("RTB", Xbox360Buttons.RightThumb);
+            buttonsDict.Add("UP", Xbox360Button.Up);
+            buttonsDict.Add("DOWN", Xbox360Button.Down);
+            buttonsDict.Add("LEFT", Xbox360Button.Left);
+            buttonsDict.Add("RIGHT", Xbox360Button.Right);
+            buttonsDict.Add("A", Xbox360Button.A);
+            buttonsDict.Add("B", Xbox360Button.B);
+            buttonsDict.Add("X", Xbox360Button.X);
+            buttonsDict.Add("Y", Xbox360Button.Y);
+            buttonsDict.Add("START", Xbox360Button.Start);
+            buttonsDict.Add("BACK", Xbox360Button.Back);
+            buttonsDict.Add("GUIDE", Xbox360Button.Guide);
+            buttonsDict.Add("LB", Xbox360Button.LeftShoulder);
+            buttonsDict.Add("LTB", Xbox360Button.LeftThumb);
+            buttonsDict.Add("RB", Xbox360Button.RightShoulder);
+            buttonsDict.Add("RTB", Xbox360Button.RightThumb);
 
         }
         public void Close()
         {
             log.Info("Closing");
-            foreach (Xbox360Controller controller in controllers)
+            foreach (IXbox360Controller controller in controllers)
             {
                 log.Debug($"Disconnecting {controller.ToString()}");
                 controller.Disconnect();
