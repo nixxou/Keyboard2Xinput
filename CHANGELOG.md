@@ -1,3 +1,5 @@
+1.2.2 (2021/09/11)
+ - add pollInterval 
 1.2.1 (2020/05/21)
 - add multiple mappings support
 - add sample mappings (Thanks Angryherbalist for the IPAC4 mapping)
