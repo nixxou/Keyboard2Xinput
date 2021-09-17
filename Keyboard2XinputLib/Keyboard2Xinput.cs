@@ -56,13 +56,17 @@ namespace Keyboard2XinputLib
                 {
 
                     pollInterval = Int16.Parse(pollIntervalStr);
-                    log.Info($"Using a poll interval of {pollInterval}");
                 } catch (FormatException e)
                 {
                     log.Error($"Error parsing poll interval: {pollIntervalStr} is not an integer", e);
 
                 }
-            }else
+            }
+            if (pollInterval > 0)
+            {
+                    log.Info($"Using a poll interval of {pollInterval}");
+            }
+            else
             {
                 log.Info($"Poll interval is 0: inputs will not be buffered");
             }
@@ -131,6 +135,7 @@ namespace Keyboard2XinputLib
                 if (padState.property is Xbox360Button)
                 {
                     state.Controllers[padState.padNumber].SetButtonState((Xbox360Button)padState.property, (bool)padState.value);
+                    log.Debug($"[{padState.padNumber}] {padState.property.Name} {padState.value}");
                 }
                 else if (padState.property is Xbox360Axis)
                 {

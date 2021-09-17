@@ -6,13 +6,15 @@ This project was created to fill a very specific need: using an I-PAC (or keyboa
 Has been successfully tested with Astebreed, BlazBlue: Calamity Trigger, BlazBlue: Chronophantasma Extend, BlazBlue: Continuum Shift Extend, Broforce, Darius Burst Chronicle Saviours, DoDonPachi Resurrection, Mortal Kombat X, PAC-MAN Championship Edition DX+, Raiden IV: OverKill, Street Fighter V, The Bug Butcher, Ultimate Marvel vs. Capcom 3.
 
 ## Requirements
-* The awesome ViGEm Bus Driver (https://github.com/ViGEm/ViGEmBus). Follow installation instructions carefully if you're on Windows 7 (https://github.com/ViGEm/ViGEmBus/releases).
+* The awesome ViGEm Bus Driver (https://github.com/ViGEm/ViGEmBus, downloads at https://github.com/ViGEm/ViGEmBus/releases). 
+
+    Warning: version 1.17.333 only supports Windows 10; use 1.16.116 if you're still on Windows 8 or 7. Follow installation instructions carefully if you're on Windows 7 (https://github.com/ViGEm/ViGEmBus/wiki/Prerequisites-for-Windows-7).
 * Microsoft Visual C++ Redistributable for Visual Studio 2015 **32bit**
 
   Be sure to download & install the 32 bit version!
 
 ## Download & Installation
-Download the latest zip here: http://kb2xi.schwingsk.net/Keyboard2Xinput-1.2.1.zip
+Download the latest zip here: http://kb2xi.schwingsk.net/Keyboard2Xinput-1.2.2.zip
 
 Make sure that ViGEm Bus Driver is installed (see Requirements).
 
@@ -26,6 +28,7 @@ enabled = true
 [config]
 Subtract = enableToggle
 Multiply = exit
+pollInterval = 0
 [pad1]
 Up = UP
 Down = DOWN
@@ -68,6 +71,11 @@ The [config] section defines:
 - enable : the key that enables key interception.
 - disable : the key that disables key interception.
 - exit : the key (here the multiply key from the keypad) that exits the program. This has been added because I use AutoHotKey to launch & kill Keyboard2Xinput, and could not figure out how to catch the exit process event (if there's one) triggered by AHK. While exiting by killing the process does work, it leaves the notification icon lingering until the mouse hovers over it. Having an exit key resolves this problem.
+- pollInterval : if not 0, buffer the inputs for n milliseconds (n being the value entered, for instance *pollInterval = 18*). Specifically created for games using the same engine as Mortal Kombat XI or Injustice 2. These games have a problem with pressing 2 buttons at the same time (to trigger throws for instance), which very rarely work. The solution used here is to buffer the inputs for a given time before sending them all at once. 
+
+    On my setups, depending on the power of the pcs, values between 0 (no buffering needed on my beefier PC) and 25 work reliably. You'll have to experiment on your setup.
+    
+    Keep in mind that this introduces input lag (16ms = 1/60s = 1 frame@60fps), so only use this on games that need it. Unfortunately I still haven't found a way to make these games work any other way.
 - config0, config1, etc... allows to switch between mutiple mapping files. When using this, config0 points to you main mapping file, config1 points to a file named *mapping1.ini*, located in the same folder as your main mapping file; config2 points to *mapping2.ini*, and so on.
    
   When using multiple mapping files, **only** the main mapping file can contain [startup] and [config] sections (otherwise the key for changing mappings could vary according to the selected mapping, and it would be a configuration  (and troubleshooting) nightmare). 
@@ -145,7 +153,9 @@ For some old games that only detect gamepads when starting, you can add a sleep 
 
 Make sure to adapt the paths to you configuration!
 
-
+## FAQ
+### throws do not work in Mortal Kombat XI/Injustice 2
+This happens when you use a 6 button-joystick setup and must use 2 simultaneous buttons to trigger some moves. These games handle inputs differently (not sure how, but it seems they are way stricter on timings). See the *pollInterval* parameter in the config file to hendle these games.
 ## Troubleshooting
 A file named k2x.log should be created each time the program runs. It contains detailed information on the keys pressed (even if they're not mapped).
 You can hop in [ArcadeControls.com forums](http://forum.arcadecontrols.com/index.php/topic,158047.0.html) if you run into problems, I'll do my best to help you.
@@ -183,7 +193,7 @@ If you launch kb2xi and immediately after your game, some of the configured game
 
 
 ## Building
-You need Microsoft Visual Studio 2017 (Community edition is ok, that's what I'm using).
+You need Microsoft Visual Studio 2019 (Community edition is ok, that's what I'm using).
 
 ## Known bugs/limitations
  * Return and Enter keys both respond to the 'Return' Virtual Key name.
