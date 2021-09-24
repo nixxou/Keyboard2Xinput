@@ -90,7 +90,7 @@ namespace Keyboard2XinputLib
             }
             catch (VigemBusNotFoundException e)
             {
-                throw new ViGEmBusNotFoundException("ViGEm bus not foundpuh, please make sure ViGEm is correctly installed.", e);
+                throw new ViGEmBusNotFoundException("ViGEm bus not found, please make sure ViGEm is correctly installed.", e);
             }
             // create pads
             controllers = new List<IXbox360Controller>(config.PadCount);
