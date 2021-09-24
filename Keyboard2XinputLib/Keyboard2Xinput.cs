@@ -90,7 +90,7 @@ namespace Keyboard2XinputLib
             }
             catch (VigemBusNotFoundException e)
             {
-                throw new ViGEmBusNotFoundException("ViGEm bus not found, please make sure ViGEm is correctly installed.", e);
+                throw new ViGEmBusNotFoundException("ViGEm bus not foundpuh, please make sure ViGEm is correctly installed.", e);
             }
             // create pads
             controllers = new List<IXbox360Controller>(config.PadCount);
@@ -102,6 +102,8 @@ namespace Keyboard2XinputLib
                     (sender, eventArgs) => log.Debug(
                         $"LM: {eventArgs.LargeMotor}, SM: {eventArgs.SmallMotor}, LED: {eventArgs.LedNumber}");
                 controller.Connect();
+                // Do NOT auto submit reports, as each submits takes milliseconds et prevents simultaneous inputs to work correctly
+                controller.AutoSubmitReport = false;
                 Thread.Sleep(1000);
             }
             // the pressed buttons (to avoid sending reports if the pressed buttons haven't changed)
@@ -113,12 +115,12 @@ namespace Keyboard2XinputLib
             // if poll interval is > 0, start the polling thread
             if (pollInterval > 0)
             {
-                padsStates = new PadsStates(controllers);
+                padsStates = new PadsStates(controllers, pollInterval);
                 timer = new System.Threading.Timer(
                 callback: new TimerCallback(TimerTask),
                 state: padsStates,
                 dueTime: 100,
-                period: pollInterval);
+                period: 2);
 
             }
 
@@ -127,25 +129,38 @@ namespace Keyboard2XinputLib
 
         private static void TimerTask(object timerState)
         {
-            //log.Debug($"{DateTime.Now:HH:mm:ss.fff}: about to update pads states.");
             var state = timerState as PadsStates;
             List<PadState> padStates = state.GetAndFlushBuffer();
-            foreach (var padState in padStates)
+            if (padStates.Count > 0)
             {
-                if (padState.property is Xbox360Button)
+                bool[] padInputsChanged = new bool[state.Controllers.Count];
+                if (log.IsDebugEnabled)
                 {
-                    state.Controllers[padState.padNumber].SetButtonState((Xbox360Button)padState.property, (bool)padState.value);
-                    log.Debug($"[{padState.padNumber}] {padState.property.Name} {padState.value}");
+                    log.Debug("Changing virtual controller(s) state");
                 }
-                else if (padState.property is Xbox360Axis)
+                foreach (var padState in padStates)
                 {
-                    state.Controllers[padState.padNumber].SetAxisValue((Xbox360Axis)padState.property, (short)padState.value);
-                }
-                else if (padState.property is Xbox360Slider)
-                {
-                    state.Controllers[padState.padNumber].SetSliderValue((Xbox360Slider)padState.property, (byte)padState.value);
-                }
-            };
+                    if (padState.property is Xbox360Button)
+                    {
+                        state.Controllers[padState.padNumber].SetButtonState((Xbox360Button)padState.property, (bool)padState.value);
+                    }
+                    else if (padState.property is Xbox360Axis)
+                    {
+                        state.Controllers[padState.padNumber].SetAxisValue((Xbox360Axis)padState.property, (short)padState.value);
+                    }
+                    else if (padState.property is Xbox360Slider)
+                    {
+                        state.Controllers[padState.padNumber].SetSliderValue((Xbox360Slider)padState.property, (byte)padState.value);
+                    }
+                    padInputsChanged[padState.padNumber] = true;
+                    if (log.IsDebugEnabled)
+                    {
+                        log.Debug($"\t pad{padState.padNumber + 1} {padState.property.Name} {padState.value}");
+                    }
+                };
+
+                submitReports(padInputsChanged, state.Controllers);
+            }
         }
 
         public void AddListener(StateListener listener)
@@ -174,6 +189,7 @@ namespace Keyboard2XinputLib
 
             if (enabled)
             {
+                bool[] padInputsChanged = new bool[config.PadCount];
 
                 for (int i = 0; i < config.PadCount; i++)
                 {
@@ -200,6 +216,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetButtonState(pressedButton, true);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -216,6 +233,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetButtonState(pressedButton, false);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -239,6 +257,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetAxisValue(axisValuePair.Key, axisValuePair.Value);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -254,6 +273,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetAxisValue(axisValuePair.Key, 0x0);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -275,6 +295,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetSliderValue(sliderValuePair.Key, sliderValuePair.Value);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -290,6 +311,7 @@ namespace Keyboard2XinputLib
                                 if (pollInterval == 0)
                                 {
                                     controllers[i].SetSliderValue(sliderValuePair.Key, 0x0);
+                                    padInputsChanged[i] = true;
                                 }
                                 else
                                 {
@@ -305,6 +327,11 @@ namespace Keyboard2XinputLib
                         }
 
                     }
+                }
+                if ((pollInterval == 0))
+                {
+                    // no buffering of inputs: submit reports now
+                    submitReports(padInputsChanged, controllers);
                 }
             }
             if (handled == 0)
@@ -375,6 +402,22 @@ namespace Keyboard2XinputLib
 
             return handled;
         }
+
+        private static void submitReports(bool[] padInputsChanged, List<IXbox360Controller> controllers)
+        {
+            for (int i = 0; i < padInputsChanged.Length; i++)
+            {
+                if (padInputsChanged[i])
+                {
+                    controllers[i].SubmitReport();
+                    if (log.IsDebugEnabled)
+                    {
+                        log.Debug($"Virtual controller {i + 1} state changed");
+                    }
+                }
+            }
+        }
+
         private void InitializeAxesDict()
         {
             // TODO create slider dict
@@ -444,28 +487,38 @@ namespace Keyboard2XinputLib
         /// <summary>Class <c>PadState</c> represents a XBox360 button, axis or trigger states.<br/>
         /// It's used when the poll intervall is >0 to store the pad states that will be passed to the virtual pads during the next update.</summary>
 
-        private class PadState
+        private class PadState : IEquatable<PadState>
         {
             public int padNumber;
             public Xbox360Property property;
             public Object value;
+            public DateTime timestamp;
             public PadState(int padNumber, Xbox360Property button, Object state)
             {
                 this.padNumber = padNumber;
                 this.property = button;
                 this.value = state;
+                timestamp = DateTime.UtcNow;
+            }
+
+            public bool Equals(PadState other)
+            {
+                // ignore value for equals, as equals is used to check if a state is already in a list to avoid having both 'button down' and a 'button up' states in the list
+                return (padNumber == other.padNumber) && (property.Equals(other.property));
             }
         }
 
         private class PadsStates
         {
             public readonly List<PadState> Buffer = new List<PadState>();
+            private int PollInterval;
 
             public List<IXbox360Controller> Controllers { get; }
 
-            public PadsStates(List<IXbox360Controller> controllers)
+            public PadsStates(List<IXbox360Controller> controllers, int pollInteval)
             {
                 Controllers = controllers;
+                PollInterval = pollInteval;
             }
 
             public void PushState(int padNumber, Xbox360Property button, Object state)
@@ -477,10 +530,49 @@ namespace Keyboard2XinputLib
             }
             public List<PadState> GetAndFlushBuffer()
             {
+                List<PadState> result = new List<PadState>();
+                DateTime now = DateTime.UtcNow;
                 Mutex.WaitOne();
-                List<PadState> result = new List<PadState>(Buffer);
-                Buffer.Clear();
-                Mutex.ReleaseMutex();
+                try
+                {
+                    if (Buffer.Count > 0)
+                    {
+                        DateTime firstEntryTime = Buffer[0].timestamp;
+                        TimeSpan timeSpan = now.Subtract(firstEntryTime);
+                        if (timeSpan.TotalMilliseconds < PollInterval)
+                        {
+                            // too soon: nothing to actually process
+                            if (log.IsDebugEnabled)
+                            {
+                                log.Debug($"Buffer has {Buffer.Count} inputs, but it's not time yet to consume it");
+                            }
+                            return result;
+                        }
+                        List<PadState> newBuffer = new List<PadState>(Buffer);
+                        Buffer.Clear();
+                        result.Add(newBuffer[0]);
+                        for (int i = 1; i < newBuffer.Count; i++)
+                        {
+                            PadState padState = newBuffer[i];
+
+                            // only add input if the same XBox360Property isn't already in result, so that if things go too fast, we don't process button down and up at the same time (which would appear as if the button hadn't been pressed)
+                            timeSpan = padState.timestamp.Subtract(firstEntryTime);
+                            if ((timeSpan.TotalMilliseconds <= PollInterval) && (!result.Contains(padState))) 
+                            {
+                                result.Add(padState);
+                            } else
+                            {
+                                Buffer.Add(padState);
+                            }
+
+                        }
+
+                    }
+                }
+                finally
+                {
+                    Mutex.ReleaseMutex();
+                }
                 return result;
             }
         }
