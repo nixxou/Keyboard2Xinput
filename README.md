@@ -155,7 +155,11 @@ Make sure to adapt the paths to you configuration!
 
 ## FAQ
 ### throws do not work in Mortal Kombat XI/Injustice 2
-This happens when you use a 6 button-joystick setup and must use 2 simultaneous buttons to trigger some moves. These games handle inputs differently (not sure how, but it seems they are way stricter on timings). See the *pollInterval* parameter in the config file to hendle these games.
+This happens when you use a 6 button-joystick setup and must use 2 simultaneous buttons to trigger some moves. These games handle inputs differently (not sure how, but it seems they are way stricter on timings). See the *pollInterval* parameter in the config file to handle these games.
+
+### can kb2xi make one key simulate two button presses?
+No, and for the time being I don't think this feature will be implemented. See [Issue 7](https://gitlab.com/SchwingSK/Keyboard2Xinput/-/issues/7) as a user has found a softwre that fits his needs.
+
 ## Troubleshooting
 A file named k2x.log should be created each time the program runs. It contains detailed information on the keys pressed (even if they're not mapped).
 You can hop in [ArcadeControls.com forums](http://forum.arcadecontrols.com/index.php/topic,158047.0.html) if you run into problems, I'll do my best to help you.
