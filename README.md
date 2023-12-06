@@ -1,3 +1,8 @@
+This is just a quick change to this awesome program to add an xinput.txt file that contains the xinput slot attributed.
+Like : 
+XINPUT1 = 1
+means that pad 1 is attributed to Xinput slot 1.
+
 # Keyboard2Xinput
 Creates virtual Xbox 360 gamepads backed by keyboard inputs.
 
