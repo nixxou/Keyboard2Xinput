@@ -11,6 +11,8 @@ using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
 using Nefarius.ViGEm.Client.Exceptions;
 using Keyboard2XinputLib.Exceptions;
+using System.Drawing;
+using System.IO;
 
 namespace Keyboard2XinputLib
 {
@@ -94,18 +96,33 @@ namespace Keyboard2XinputLib
             }
             // create pads
             controllers = new List<IXbox360Controller>(config.PadCount);
+            string XinputData = "";
             for (int i = 1; i <= config.PadCount; i++)
             {
                 IXbox360Controller controller = client.CreateXbox360Controller();
+                
                 controllers.Add(controller);
                 controller.FeedbackReceived +=
                     (sender, eventArgs) => log.Debug(
                         $"LM: {eventArgs.LargeMotor}, SM: {eventArgs.SmallMotor}, LED: {eventArgs.LedNumber}");
                 controller.Connect();
-                // Do NOT auto submit reports, as each submits takes milliseconds et prevents simultaneous inputs to work correctly
-                controller.AutoSubmitReport = false;
+
+                
+				// Do NOT auto submit reports, as each submits takes milliseconds et prevents simultaneous inputs to work correctly
+				controller.AutoSubmitReport = false;
                 Thread.Sleep(1000);
-            }
+                int XinputSlotNum = -1;
+				try
+				{
+                    XinputSlotNum = controller.UserIndex + 1;
+                    XinputData += $"XINPUT{XinputSlotNum} = {i}";
+                    XinputData += "\n";
+				}
+				catch (Exception){ }
+			}
+
+            File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"xinput.txt"),XinputData.ToString());
+
             // the pressed buttons (to avoid sending reports if the pressed buttons haven't changed)
             pressedButtons = new List<ISet<Xbox360Button>>(config.PadCount);
             for (int i = 0; i < config.PadCount; i++)

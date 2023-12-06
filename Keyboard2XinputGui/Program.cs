@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -48,7 +49,7 @@ namespace Keyboard2XinputGui
             securitySettings.AddAccessRule(allowEveryoneRule);
 
             // edited by MasonGZhwiti to prevent race condition on security settings via VanNguyen
-            using (var mutex = new Mutex(false, mutexId, out createdNew, securitySettings))
+            using (var mutex =  new Mutex(false, mutexId, out createdNew, securitySettings))
             {
                 // edited by acidzombie24
                 var hasHandle = false;
@@ -93,7 +94,12 @@ namespace Keyboard2XinputGui
                         AppDomain currentDomain = AppDomain.CurrentDomain;
                         currentDomain.UnhandledException += new UnhandledExceptionEventHandler(MyHandler);
                         Application.ApplicationExit += new EventHandler(OnApplicationExit);
-                        gui = new Keyboard2XinputGui(mappingFile);
+
+                        string XinputFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "xinput.txt");
+                        if(File.Exists(XinputFilePath)) File.Delete(XinputFilePath);
+
+
+						gui = new Keyboard2XinputGui(mappingFile);
                         // Run() without parameter to not show the form at launch
                         Application.Run();
                         //Application.Run(gui);
@@ -112,7 +118,9 @@ namespace Keyboard2XinputGui
         private static void OnApplicationExit(object sender, EventArgs e)
         {
             gui.CloseK2x();
-        }
+			string XinputFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "xinput.txt");
+			if (File.Exists(XinputFilePath)) File.Delete(XinputFilePath);
+		}
 
         static void MyHandler(object sender, UnhandledExceptionEventArgs e)
         {
